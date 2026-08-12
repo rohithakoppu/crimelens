@@ -307,15 +307,20 @@ export default function EvidenceDetail() {
               {deriving ? <Loader2 size={13} className="animate-spin" /> : <Copy size={13} />} Create Derived Copy
             </button>
           )}
-          {!evidence.is_derived && evidence.storage_status === "STORED" && (
-            <button
-              onClick={() => setShowEdit((v) => !v)}
-              title="Prototype: creates an actually-edited (trimmed) copy on a separate evidence record, to demonstrate that modifying content changes its cryptographic hash. The original file is never touched."
-              className="flex items-center gap-2 bg-warn-500/10 hover:bg-warn-500/20 border border-warn-500/30 text-xs rounded-xl px-3 py-2 transition-colors text-warn-500"
-            >
-              <Pencil size={13} /> Edit (Prototype)
-            </button>
-          )}
+          <button
+            onClick={() => setShowEdit((v) => !v)}
+            disabled={evidence.is_derived || evidence.storage_status !== "STORED"}
+            title={
+              evidence.is_derived
+                ? "Editing is only available from the original evidence record -- open the original to create an edit."
+                : evidence.storage_status !== "STORED"
+                ? `Editing needs the stored original file, which isn't available yet (storage_status: ${evidence.storage_status}).`
+                : "Prototype: creates an actually-edited (trimmed) copy on a separate evidence record, to demonstrate that modifying content changes its cryptographic hash. The original file is never touched."
+            }
+            className="flex items-center gap-2 bg-warn-500/10 hover:bg-warn-500/20 border border-warn-500/30 text-xs rounded-xl px-3 py-2 transition-colors text-warn-500 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-warn-500/10"
+          >
+            <Pencil size={13} /> Edit (Prototype)
+          </button>
           <button
             onClick={() => setShowQr((v) => !v)}
             className="flex items-center gap-2 bg-ink-800 hover:bg-ink-700 border border-ink-700 text-xs rounded-xl px-3 py-2 transition-colors text-slate-300"
@@ -456,10 +461,15 @@ export default function EvidenceDetail() {
                   <div className="mono text-slate-300 break-all">{editedHash}</div>
                 </div>
               </div>
-              <div className="mt-3 rounded-xl bg-ink-900/60 p-3 text-xs flex items-center gap-2">
-                <GitCompareArrows size={14} className="text-warn-500" />
-                <span className="font-bold text-warn-500">Hash Changed: YES</span>
-                <span className="text-slate-500">— the edited copy's content differs from the original, so its SHA-256 differs too.</span>
+              <div className="mt-3 rounded-xl bg-warn-500/10 border border-warn-500/30 p-3 text-xs">
+                <div className="flex items-center gap-2 font-bold text-warn-500">
+                  <XCircle size={14} /> ❌ HASH MISMATCH
+                </div>
+                <div className="flex items-center gap-2 mt-1.5">
+                  <GitCompareArrows size={14} className="text-warn-500 shrink-0" />
+                  <span className="font-bold text-warn-500">Hash Changed: YES</span>
+                  <span className="text-slate-500">— the edited copy's content differs from the original, so its SHA-256 differs too.</span>
+                </div>
               </div>
               <Link
                 to={`/evidence/${editedResult.evidence_id}`}
