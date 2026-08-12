@@ -1,0 +1,15 @@
+node_modules/
+venv/
+__pycache__/
+*.pyc
+dist/
+.env
+*.env.local
+firebase-service-account.json
+backend/firebase-service-account.json
+.evidencechain_backend.pid
+.evidencechain_frontend.pid
+.evidencechain_run_backend.cmd
+.evidencechain_run_frontend.cmd
+.launcher_test.log
+backend/data/

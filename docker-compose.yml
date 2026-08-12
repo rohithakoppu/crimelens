@@ -1,0 +1,23 @@
+version: "3.9"
+
+# No local infra is required anymore: data/auth/storage live in Firebase
+# (Firestore + Firebase Storage + Firebase Auth, all cloud-hosted) and the
+# blockchain anchor is real Algorand Testnet (also cloud-hosted, via
+# AlgoNode's public endpoints). The FastAPI backend and Vite frontend are run
+# directly (see README) for fast dev-reload.
+#
+# Ollama is the one genuinely optional piece of local infra: only needed if
+# USE_LLM_SUMMARIZER=true in backend/.env. Everything else works without it.
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: evidencechain-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    profiles: ["llm"]
+
+volumes:
+  ollama_data:

@@ -1,0 +1,14 @@
+rules_version = '2';
+
+// Same reasoning as firestore.rules: only the backend (Firebase Admin SDK,
+// via a service account) ever reads or writes evidence files. The frontend
+// never uploads/downloads directly from Firebase Storage -- it always goes
+// through backend endpoints, which decrypt/re-encrypt and enforce RBAC.
+// This denies all direct client access as a safety net.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
