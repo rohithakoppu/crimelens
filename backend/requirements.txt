@@ -4,6 +4,7 @@ pydantic==2.9.2
 pydantic-settings==2.5.2
 python-multipart==0.0.9
 pyotp==2.9.0
+bcrypt==4.2.0
 py-algorand-sdk==2.6.1
 firebase-admin==6.5.0
 opencv-python-headless==4.10.0.84
@@ -14,3 +15,9 @@ python-dotenv==1.0.1
 cryptography==43.0.1
 requests==2.32.3
 qrcode[pil]==7.4.2
+
+# Only needed to compile/deploy the Algorand smart contract
+# (scripts/deploy_contract.py) and to run tests/test_contract.py -- the
+# running API server never imports this (contract.py reads the deployed
+# app ID from config, it doesn't recompile TEAL at request time).
+pyteal==0.27.0

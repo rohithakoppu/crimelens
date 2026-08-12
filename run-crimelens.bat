@@ -1,33 +1,39 @@
 @echo off
 setlocal EnableDelayedExpansion
 REM ============================================================================
-REM  EvidenceChain AI - Windows Launcher
-REM  Double-click this file. It starts the backend, starts the frontend,
-REM  waits until both are actually ready, then opens the app in your browser.
+REM  CrimeLens - Windows Launcher
+REM  Double-click this file. It checks prerequisites, installs dependencies
+REM  if needed, starts the backend, starts the frontend, waits until both are
+REM  actually ready, then opens the app in your browser.
+REM
+REM  This script is fully portable: it never assumes a specific username,
+REM  drive letter, or folder location. Every path is derived from %~dp0 (the
+REM  folder this file itself lives in) or is relative to it, so it works the
+REM  same way regardless of where the project was cloned/extracted, on any
+REM  Windows account.
 REM ============================================================================
 
-title EvidenceChain AI - Launcher
+title CrimeLens - Launcher
 
 REM ----------------------------------------------------------------------------
 REM SECTION 1: Locate the project root from THIS .bat file's own location.
 REM %~dp0 always expands to "the folder this script lives in", with a
 REM trailing backslash, and works correctly even if the path contains spaces
-REM (as long as we keep quoting it below). This means the launcher works no
-REM matter which Windows user account or folder the project sits in.
+REM (as long as we keep quoting it below).
 REM ----------------------------------------------------------------------------
 set "ROOT_DIR=%~dp0"
 set "BACKEND_DIR=%ROOT_DIR%backend"
 set "FRONTEND_DIR=%ROOT_DIR%frontend"
 set "VENV_PY=%BACKEND_DIR%\venv\Scripts\python.exe"
-set "BACKEND_PID_FILE=%ROOT_DIR%.evidencechain_backend.pid"
-set "FRONTEND_PID_FILE=%ROOT_DIR%.evidencechain_frontend.pid"
+set "BACKEND_PID_FILE=%ROOT_DIR%.crimelens_backend.pid"
+set "FRONTEND_PID_FILE=%ROOT_DIR%.crimelens_frontend.pid"
 set "DEPS_MARKER=%BACKEND_DIR%\venv\.deps_installed"
-set "BACKEND_RUNNER=%ROOT_DIR%.evidencechain_run_backend.cmd"
-set "FRONTEND_RUNNER=%ROOT_DIR%.evidencechain_run_frontend.cmd"
-set "LAUNCH_PS1=%ROOT_DIR%.evidencechain_launch.ps1"
+set "BACKEND_RUNNER=%ROOT_DIR%.crimelens_run_backend.cmd"
+set "FRONTEND_RUNNER=%ROOT_DIR%.crimelens_run_frontend.cmd"
+set "LAUNCH_PS1=%ROOT_DIR%.crimelens_launch.ps1"
 
 echo ============================================================
-echo   EvidenceChain AI - Starting up
+echo   CrimeLens - Starting up
 echo   Project root: %ROOT_DIR%
 echo ============================================================
 echo.
@@ -38,7 +44,7 @@ REM ----------------------------------------------------------------------------
 if not exist "%BACKEND_DIR%\main.py" (
     echo [ERROR] Could not find backend\main.py under:
     echo         %BACKEND_DIR%
-    echo         This launcher must stay in the EvidenceChain AI project root,
+    echo         This launcher must stay in the CrimeLens project root,
     echo         next to the "backend" and "frontend" folders.
     goto :FAIL
 )
@@ -65,21 +71,68 @@ if errorlevel 1 (
 )
 
 REM ----------------------------------------------------------------------------
-REM SECTION 4: Check/prepare the backend Python virtual environment.
-REM If backend\venv doesn't exist yet, create it from whatever "python" is on
-REM PATH, then install requirements.txt. If it already exists, we reuse it
-REM as-is (never recreated on every run).
+REM SECTION 4: Find a working Python interpreter on PATH.
+REM Some Windows machines have a "python" command that is really the
+REM Microsoft Store's install-stub (it does nothing but open the Store when
+REM run), while the real interpreter is only reachable via the "py" launcher
+REM that the official python.org installer registers. We probe both and use
+REM whichever one actually runs Python code.
+REM ----------------------------------------------------------------------------
+set "PYTHON_CMD="
+where python >nul 2>nul
+if not errorlevel 1 (
+    python -c "import sys" >nul 2>nul
+    if not errorlevel 1 set "PYTHON_CMD=python"
+)
+if not defined PYTHON_CMD (
+    where py >nul 2>nul
+    if not errorlevel 1 (
+        py -3 -c "import sys" >nul 2>nul
+        if not errorlevel 1 set "PYTHON_CMD=py -3"
+    )
+)
+if not defined PYTHON_CMD (
+    echo [ERROR] A working Python installation was not found on your PATH.
+    echo         Install Python 3.11+ from https://www.python.org/downloads/
+    echo         ^(check "Add python.exe to PATH" during install^) and re-run this launcher.
+    echo         If "python" opens the Microsoft Store instead of running, that is the
+    echo         Store's placeholder stub, not a real installation - use the official
+    echo         installer above instead.
+    goto :FAIL
+)
+
+REM ----------------------------------------------------------------------------
+REM SECTION 5: Ensure .env configuration files exist (created from the
+REM committed .example templates, never overwritten if already present).
+REM Real secrets are never committed to the repo; without them the app still
+REM starts and runs, with every Firebase/Algorand-backed feature honestly
+REM reporting "not configured" instead of failing to start or faking success.
+REM ----------------------------------------------------------------------------
+if not exist "%BACKEND_DIR%\.env" (
+    if exist "%BACKEND_DIR%\.env.example" (
+        copy /Y "%BACKEND_DIR%\.env.example" "%BACKEND_DIR%\.env" >nul
+        echo [SETUP] Created backend\.env from backend\.env.example.
+        echo          Fill in real Firebase/Algorand credentials there later for full
+        echo          functionality - the app works without them, just with those
+        echo          features honestly showing as "not configured".
+    )
+)
+if not exist "%FRONTEND_DIR%\.env" (
+    if exist "%FRONTEND_DIR%\.env.example" (
+        copy /Y "%FRONTEND_DIR%\.env.example" "%FRONTEND_DIR%\.env" >nul
+        echo [SETUP] Created frontend\.env from frontend\.env.example.
+        echo          Fill in VITE_FIREBASE_* there later to enable Google/email sign-in.
+    )
+)
+
+REM ----------------------------------------------------------------------------
+REM SECTION 6: Check/prepare the backend Python virtual environment.
+REM If backend\venv doesn't exist yet, create it, then install requirements.txt.
+REM If it already exists, we reuse it as-is (never recreated on every run).
 REM ----------------------------------------------------------------------------
 if not exist "%VENV_PY%" (
     echo [SETUP] No virtual environment found at backend\venv - creating one now...
-    where python >nul 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Python was not found on your PATH.
-        echo         Install Python 3.11+ from https://www.python.org/downloads/
-        echo         ^(check "Add python.exe to PATH" during install^) and re-run this launcher.
-        goto :FAIL
-    )
-    python -m venv "%BACKEND_DIR%\venv"
+    %PYTHON_CMD% -m venv "%BACKEND_DIR%\venv"
     if errorlevel 1 (
         echo [ERROR] Failed to create the Python virtual environment.
         goto :FAIL
@@ -87,7 +140,7 @@ if not exist "%VENV_PY%" (
 )
 
 REM ----------------------------------------------------------------------------
-REM SECTION 5: Install backend dependencies only if needed.
+REM SECTION 7: Install backend dependencies only if needed.
 REM We reinstall only when requirements.txt is newer than our own marker
 REM file, or the marker doesn't exist yet - not on every single launch.
 REM ----------------------------------------------------------------------------
@@ -113,7 +166,7 @@ if "%NEED_BACKEND_INSTALL%"=="1" (
 )
 
 REM ----------------------------------------------------------------------------
-REM SECTION 6: Install frontend dependencies only if node_modules is missing.
+REM SECTION 8: Install frontend dependencies only if node_modules is missing.
 REM ----------------------------------------------------------------------------
 if not exist "%FRONTEND_DIR%\node_modules" (
     echo [SETUP] Installing frontend dependencies ^(npm install^)...
@@ -129,22 +182,25 @@ if not exist "%FRONTEND_DIR%\node_modules" (
     echo [OK] Frontend dependencies already installed, skipping.
 )
 
+REM ----------------------------------------------------------------------------
+REM SECTION 9: Make sure the local evidence storage directory exists.
+REM ----------------------------------------------------------------------------
+if not exist "%BACKEND_DIR%\data\evidence" mkdir "%BACKEND_DIR%\data\evidence" >nul 2>nul
+
 echo.
 echo ============================================================
 echo   Starting services
 echo ============================================================
 
 REM ----------------------------------------------------------------------------
-REM SECTION 7: Start the backend - but only if it isn't already running.
+REM SECTION 10: Start the backend - but only if it isn't already running.
 REM We check the port first so double-clicking this launcher twice never
 REM spawns a duplicate backend (which would just crash with "port already
 REM in use" anyway).
 REM ----------------------------------------------------------------------------
-set "BACKEND_ALREADY_RUNNING=0"
 call :CHECK_HTTP "http://localhost:8000/health" 2
 if "%HTTP_OK%"=="1" (
     echo [OK] Backend already running and healthy at http://localhost:8000 - reusing it.
-    set "BACKEND_ALREADY_RUNNING=1"
 ) else (
     netstat -ano | findstr ":8000" | findstr "LISTENING" >nul 2>nul
     if not errorlevel 1 (
@@ -158,15 +214,15 @@ if "%HTTP_OK%"=="1" (
     REM building a one-line "cmd /k ..." command from paths that may contain
     REM spaces - each line below is parsed normally, with no quote-doubling.
     > "%BACKEND_RUNNER%" echo @echo off
-    >> "%BACKEND_RUNNER%" echo title EvidenceChain-Backend
+    >> "%BACKEND_RUNNER%" echo title CrimeLens-Backend
     >> "%BACKEND_RUNNER%" echo cd /d "%BACKEND_DIR%"
     >> "%BACKEND_RUNNER%" echo "%VENV_PY%" -m uvicorn main:app --reload --port 8000
 
     REM Launched via a small PowerShell helper using Start-Process -PassThru,
     REM which hands back the REAL process id straight from Windows -- far
     REM more reliable than trying to re-find the window afterwards by title
-    REM (title matching broke during testing: cmd.exe alters the title it's
-    REM given, and Vite overwrites it again once the frontend starts).
+    REM (title matching breaks: cmd.exe alters the title it's given, and
+    REM uvicorn's reloader can spawn a child process too).
     for /f %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%LAUNCH_PS1%" -ScriptPath "%BACKEND_RUNNER%" -PidFile "%BACKEND_PID_FILE%"') do set "BACKEND_PID=%%P"
 
     echo [WAIT] Waiting for backend health check at http://localhost:8000/health ...
@@ -175,9 +231,11 @@ if "%HTTP_OK%"=="1" (
     call :CHECK_HTTP "http://localhost:8000/health" 2
     if "%HTTP_OK%"=="1" goto :BACKEND_READY
     set /a WAITED+=1
-    if !WAITED! GEQ 45 (
-        echo [ERROR] Backend did not become healthy within 45 seconds.
-        echo         Check the "EvidenceChain-Backend" window for the real error.
+    if !WAITED! GEQ 60 (
+        echo [ERROR] Backend did not become healthy within 60 seconds.
+        echo         Check the "CrimeLens-Backend" window for the real error
+        echo         ^(a missing Python package, a syntax error, or a port conflict
+        echo         are the most common causes^).
         goto :FAIL
     )
     "%SystemRoot%\System32\timeout.exe" /t 1 /nobreak >nul
@@ -187,7 +245,7 @@ if "%HTTP_OK%"=="1" (
 )
 
 REM ----------------------------------------------------------------------------
-REM SECTION 8: Start the frontend - same "don't start a duplicate" logic.
+REM SECTION 11: Start the frontend - same "don't start a duplicate" logic.
 REM ----------------------------------------------------------------------------
 call :CHECK_HTTP "http://localhost:5173" 2
 if "%HTTP_OK%"=="1" (
@@ -202,7 +260,7 @@ if "%HTTP_OK%"=="1" (
 
     echo [START] Launching frontend ^(Vite dev server^) in its own window...
     > "%FRONTEND_RUNNER%" echo @echo off
-    >> "%FRONTEND_RUNNER%" echo title EvidenceChain-Frontend
+    >> "%FRONTEND_RUNNER%" echo title CrimeLens-Frontend
     >> "%FRONTEND_RUNNER%" echo cd /d "%FRONTEND_DIR%"
     >> "%FRONTEND_RUNNER%" echo call npm run dev
 
@@ -217,7 +275,7 @@ if "%HTTP_OK%"=="1" (
     set /a WAITED+=1
     if !WAITED! GEQ 60 (
         echo [ERROR] Frontend did not respond within 60 seconds.
-        echo         Check the "EvidenceChain-Frontend" window for the real error.
+        echo         Check the "CrimeLens-Frontend" window for the real error.
         echo         The browser will NOT be opened to a broken page.
         goto :FAIL
     )
@@ -228,21 +286,28 @@ if "%HTTP_OK%"=="1" (
 )
 
 REM ----------------------------------------------------------------------------
-REM SECTION 9: Everything is confirmed ready - now, and only now, open the browser.
+REM SECTION 12: Everything is confirmed ready - now, and only now, open the browser.
 REM ----------------------------------------------------------------------------
 echo.
-echo [OPEN] Opening EvidenceChain AI in your default browser...
+echo [OPEN] Opening CrimeLens in your default browser...
 start "" "http://localhost:5173"
 
 echo.
 echo ============================================================
-echo   EvidenceChain AI is running
-echo     Backend:  http://localhost:8000   (see "EvidenceChain-Backend" window)
-echo     Frontend: http://localhost:5173   (see "EvidenceChain-Frontend" window)
+echo   CrimeLens is running
+echo     Backend:  http://localhost:8000   (see "CrimeLens-Backend" window)
+echo     Frontend: http://localhost:5173   (see "CrimeLens-Frontend" window)
 echo.
 echo   Both services keep running in their own windows.
-echo   Run STOP_EVIDENCECHAIN.bat to shut them down cleanly.
+echo   Run stop-crimelens.bat to shut them down cleanly.
 echo ============================================================
+echo.
+echo   NOTE ON THE CAMERA: the app must be opened at http://localhost:5173
+echo   ^(never a file:// path^) for the browser to allow webcam access - this
+echo   launcher always opens the correct URL. When the Live Camera page asks
+echo   for permission, click Allow. If your computer has no webcam, or another
+echo   app is already using it, the page will clearly say so instead of
+echo   pretending the camera works.
 echo.
 pause
 exit /b 0
@@ -264,9 +329,9 @@ REM Helper: CHECK_HTTP <url> <timeout_seconds>
 REM Sets HTTP_OK=1 if the URL responds with any HTTP status (server is alive),
 REM HTTP_OK=0 otherwise. Uses curl.exe (built into Windows 10/11 at
 REM System32\curl.exe) rather than spawning PowerShell -- PowerShell's own
-REM interpreter startup overhead was eating most of a short per-poll timeout
-REM budget during testing, causing false "not ready" reads even once the
-REM server was already responding. curl.exe has no such startup cost.
+REM interpreter startup overhead eats most of a short per-poll timeout budget,
+REM causing false "not ready" reads even once the server is already responding.
+REM curl.exe has no such startup cost.
 REM Note: the curl.exe path is deliberately left UNQUOTED below (it has no
 REM spaces) -- cmd's "for /f ('command')" mis-parses a captured command that
 REM starts with a literal quote character, which silently returns no output.

@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=os.path.join(_BACKEND_DIR, ".env"), extra="ignore")
 
     # Core
-    app_name: str = "EvidenceChain AI"
+    app_name: str = "CrimeLens"
     environment: str = "development"
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"

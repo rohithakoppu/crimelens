@@ -1,21 +1,21 @@
 @echo off
 setlocal EnableDelayedExpansion
 REM ============================================================================
-REM  EvidenceChain AI - Windows Stopper
-REM  Stops ONLY the backend/frontend processes that START_EVIDENCECHAIN.bat
-REM  started (tracked by PID file, falling back to window title). It never
-REM  touches unrelated Python/Node processes on your machine.
+REM  CrimeLens - Windows Stopper
+REM  Stops ONLY the backend/frontend processes that run-crimelens.bat started
+REM  (tracked by PID file, falling back to window title). It never touches
+REM  unrelated Python/Node processes on your machine.
 REM ============================================================================
 
-title EvidenceChain AI - Stopping
+title CrimeLens - Stopping
 
 set "ROOT_DIR=%~dp0"
-set "BACKEND_PID_FILE=%ROOT_DIR%.evidencechain_backend.pid"
-set "FRONTEND_PID_FILE=%ROOT_DIR%.evidencechain_frontend.pid"
+set "BACKEND_PID_FILE=%ROOT_DIR%.crimelens_backend.pid"
+set "FRONTEND_PID_FILE=%ROOT_DIR%.crimelens_frontend.pid"
 set "STOPPED_ANYTHING=0"
 
 echo ============================================================
-echo   EvidenceChain AI - Stopping services
+echo   CrimeLens - Stopping services
 echo ============================================================
 echo.
 
@@ -25,21 +25,21 @@ REM that process's whole tree (uvicorn's reload watcher included). Only if
 REM the PID file is missing/stale do we fall back to matching the window
 REM title we always use for this project's backend window.
 REM ----------------------------------------------------------------------------
-call :STOP_TRACKED "%BACKEND_PID_FILE%" "EvidenceChain-Backend"
+call :STOP_TRACKED "%BACKEND_PID_FILE%" "CrimeLens-Backend"
 
 REM ----------------------------------------------------------------------------
 REM Stop the frontend the same way.
 REM ----------------------------------------------------------------------------
-call :STOP_TRACKED "%FRONTEND_PID_FILE%" "EvidenceChain-Frontend"
+call :STOP_TRACKED "%FRONTEND_PID_FILE%" "CrimeLens-Frontend"
 
 echo.
 if "%STOPPED_ANYTHING%"=="1" (
     echo ============================================================
-    echo   Done. EvidenceChain AI services have been stopped.
+    echo   Done. CrimeLens services have been stopped.
     echo ============================================================
 ) else (
     echo ============================================================
-    echo   Nothing to stop - no EvidenceChain AI services were running
+    echo   Nothing to stop - no CrimeLens services were running
     echo   ^(or they were already closed^).
     echo ============================================================
 )
