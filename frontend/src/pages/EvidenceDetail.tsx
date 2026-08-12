@@ -26,6 +26,7 @@ export default function EvidenceDetail() {
   const [custodyEvents, setCustodyEvents] = useState<CustodyEvent[]>([]);
   const [verify, setVerify] = useState<VerifyResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [segments, setSegments] = useState<EvidenceSegment[]>([]);
   const [segmentChain, setSegmentChain] = useState<SegmentChainStatus | null>(null);
@@ -48,20 +49,50 @@ export default function EvidenceDetail() {
   const [editError, setEditError] = useState<string | null>(null);
   const editCaptureRef = useRef<HTMLVideoElement | null>(null);
 
+  // Root cause of the "stuck on Loading evidence..." bug: none of these
+  // four calls had a .catch(), so `loading` was only ever set to false
+  // inside the FIRST call's success handler. Any failure of that one call
+  // (a transient network hiccup, an expired token, a slow/failed Firestore
+  // read) left `loading` stuck at `true` forever, and the page rendered
+  // nothing but the loading line for good -- not a rendering bug, a real
+  // unhandled-promise-rejection bug. Now every call has its own .catch(),
+  // and the first call's loading flag is cleared in .finally() so it
+  // always resolves one way or the other. The other three calls degrade
+  // independently (custody/segments/blockchain panels just show their own
+  // real "unavailable" state) rather than blocking the whole page.
   const load = () => {
     if (!evidenceId) return;
-    api.get(`/evidence/${evidenceId}`).then(({ data }) => {
-      setEvidence(data.evidence);
-      setAiResults(data.ai_results);
-      setCustodyChain(data.custody_chain);
-      setLoading(false);
-    });
-    api.get(`/evidence/${evidenceId}/custody`).then(({ data }) => setCustodyEvents(data.events));
-    api.get(`/evidence/${evidenceId}/segments`).then(({ data }) => {
-      setSegments(data.segments);
-      setSegmentChain(data.chain);
-    });
-    api.get<BlockchainProofResult>(`/evidence/${evidenceId}/blockchain`).then(({ data }) => setBlockchainProof(data));
+    setLoading(true);
+    setLoadError(null);
+    api
+      .get(`/evidence/${evidenceId}`)
+      .then(({ data }) => {
+        setEvidence(data.evidence);
+        setAiResults(data.ai_results);
+        setCustodyChain(data.custody_chain);
+      })
+      .catch((err: unknown) => {
+        const detail =
+          err && typeof err === "object" && "response" in err
+            ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+            : undefined;
+        const message = err && typeof err === "object" && "message" in err ? (err as { message?: string }).message : undefined;
+        setLoadError(detail ?? message ?? "Could not reach the server.");
+      })
+      .finally(() => setLoading(false));
+
+    api.get(`/evidence/${evidenceId}/custody`).then(({ data }) => setCustodyEvents(data.events)).catch(() => {});
+    api
+      .get(`/evidence/${evidenceId}/segments`)
+      .then(({ data }) => {
+        setSegments(data.segments);
+        setSegmentChain(data.chain);
+      })
+      .catch(() => {});
+    api
+      .get<BlockchainProofResult>(`/evidence/${evidenceId}/blockchain`)
+      .then(({ data }) => setBlockchainProof(data))
+      .catch(() => {});
   };
 
   useEffect(load, [evidenceId]);
@@ -214,6 +245,20 @@ export default function EvidenceDetail() {
   };
 
   if (loading) return <div className="p-8 text-sm text-slate-500">Loading evidence...</div>;
+  if (loadError) {
+    return (
+      <div className="p-8 max-w-2xl mx-auto">
+        <div className="flex items-start gap-3 text-sm text-danger-500 bg-danger-500/10 rounded-2xl p-5">
+          <AlertOctagon size={18} className="shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold">UNABLE TO LOAD EVIDENCE</p>
+            <p className="text-xs text-danger-400 mt-1">{loadError}</p>
+            <button onClick={load} className="text-xs text-accent-500 hover:underline mt-3">Retry</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (!evidence) return <div className="p-8 text-sm text-slate-500">Evidence not found.</div>;
 
   return (
@@ -443,7 +488,7 @@ export default function EvidenceDetail() {
         </div>
         <div className="glass-panel rounded-2xl p-5">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs text-slate-500">Deterministic verification</p>
+            <p className="mono text-[10px] uppercase tracking-wider text-slate-500">🔐 Local Hash Check</p>
             <button
               onClick={runVerify}
               disabled={verifying}
@@ -455,13 +500,27 @@ export default function EvidenceDetail() {
           </div>
           {verify ? (
             <>
+              <div className="grid gap-2 text-[11px] mb-3">
+                <div><div className="text-slate-500 mb-1">Expected / Original Hash</div><div className="mono text-slate-300 break-all">{verify.original_hash}</div></div>
+                <div><div className="text-slate-500 mb-1">Current File Hash</div><div className={`mono break-all ${verify.hash_match ? "text-slate-300" : "text-danger-500 font-semibold"}`}>{verify.current_hash}</div></div>
+              </div>
+              <div
+                className={`flex items-center gap-1.5 text-sm font-bold mb-1 ${verify.hash_match ? "text-accent-500" : "text-danger-500"}`}
+              >
+                {verify.hash_match ? <>✅ HASH MATCH</> : <>❌ HASH MISMATCH</>}
+              </div>
+              <p className="text-[11px] text-slate-500 mb-3">
+                {verify.hash_match
+                  ? "Evidence content matches the hash recorded at ingest."
+                  : "Evidence content does not match the original recorded hash."}
+              </p>
               <div
                 className={`flex items-center gap-1.5 text-sm font-medium mb-3 ${
                   verify.verdict === "AUTHENTIC" ? "text-accent-500" : "text-danger-500"
                 }`}
               >
                 {verify.verdict === "AUTHENTIC" ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
-                {verify.verdict}
+                Overall verdict: {verify.verdict}
               </div>
               <ul className="space-y-1 text-[11px] text-slate-400">
                 <CheckRow label="Original hash match" ok={verify.hash_match} />
@@ -469,7 +528,6 @@ export default function EvidenceDetail() {
                 <CheckRow label="Custody chain intact" ok={verify.custody_chain_intact} />
                 <CheckRow label="Segment chain intact" ok={verify.segment_chain_intact} />
                 {verify.root_hash_checked && <CheckRow label="Root hash match" ok={!!verify.root_hash_match} />}
-                <CheckRow label="Blockchain anchor" ok={verify.blockchain.verified} note={verify.blockchain.reason} />
               </ul>
               {verify.verdict !== "AUTHENTIC" && (verify.failure_reason || verify.failed_segment !== null) && (
                 <p className="text-[11px] text-danger-500 mt-2">
@@ -483,24 +541,36 @@ export default function EvidenceDetail() {
                 </p>
               )}
               <p className="text-[10px] text-slate-600 mt-2">
-                Blockchain status: {verify.blockchain_status} -- reported independently of the integrity verdict above.
+                This panel is a LOCAL check only (recomputed from the stored file on this server). The blockchain
+                anchor is reported separately below -- it never changes the verdict above.
               </p>
             </>
           ) : (
-            <p className="text-xs text-slate-600">Click "Verify now" to recompute hash, re-check the signature, validate the custody chain, verify the segment chain and Evidence Root Hash, and re-verify the Algorand anchor via Indexer.</p>
+            <p className="text-xs text-slate-600">Click "Verify now" to recompute the hash locally, re-check the signature, validate the custody chain, and verify the segment chain and Evidence Root Hash.</p>
           )}
         </div>
       </div>
 
       {/* Blockchain proof -- real, independently-read smart-contract state,
-         never a cached/fabricated status. See custody/verification.py. */}
+         never a cached/fabricated status. See custody/verification.py.
+         Explicitly labeled as a SEPARATE, blockchain-anchored check so it's
+         never confused with the local hash comparison above. */}
       <div className={`rounded-xl border px-4 py-4 mb-6 ${blockchainProof?.verification_status === "CONFIRMED" ? "border-accent-500/30 bg-accent-500/5" : "border-warn-500/30 bg-warn-500/5"}`}>
         <div className="flex items-center justify-between mb-3">
-          <span className="text-xs font-semibold text-slate-300">BLOCKCHAIN PROOF</span>
+          <span className="mono text-[10px] uppercase tracking-wider text-slate-300">⛓ Blockchain-Anchored Hash Check</span>
           <span className={`text-[11px] font-medium ${blockchainProof?.verification_status === "CONFIRMED" ? "text-accent-500" : "text-warn-500"}`}>
             {blockchainProof?.verification_status ?? "..."}
           </span>
         </div>
+        {verify && (
+          <div className="mb-3 text-[11px]">
+            {verify.blockchain.verified ? (
+              <span className="text-accent-500 font-semibold">✅ Anchored root hash matches this evidence's current Root Hash.</span>
+            ) : (
+              <span className="text-warn-500 font-semibold">⚠ {verify.blockchain.reason ?? "Not independently confirmed on-chain."}</span>
+            )}
+          </div>
+        )}
         {blockchainProof && (
           <dl className="grid grid-cols-2 gap-3 text-[11px] mono">
             <div><dt className="text-slate-500">Network</dt><dd className="text-slate-300">{blockchainProof.network}</dd></div>

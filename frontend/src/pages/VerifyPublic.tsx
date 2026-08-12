@@ -2,8 +2,30 @@ import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   ShieldCheck, Search, CheckCircle2, XCircle, Loader2, ExternalLink, FlaskConical, AlertOctagon, ArrowLeft, Upload,
+  WifiOff,
 } from "lucide-react";
 import { api, type VerifyResult } from "../lib/api";
+
+/**
+ * QR-scan fallback for when a phone opens the /verify/{id} URL but can't
+ * actually reach the backend (e.g. scanning on localhost from a phone not
+ * on the same machine, or the backend genuinely being down). This is NEVER
+ * presented as real evidence/blockchain data -- every field is prefixed
+ * "DEMO"/"PROTOTYPE" and the values are deterministically derived from the
+ * scanned evidence ID itself (so they're related to what was scanned, not
+ * random), never a fabricated hash claimed to be real.
+ */
+function deriveDemoFingerprint(evidenceId: string): string {
+  // A simple, non-cryptographic, deterministic digest of the ID string --
+  // intentionally NOT SHA-256 and intentionally short, so it can never be
+  // mistaken for a real hash. Same evidence ID always produces the same
+  // demo fingerprint.
+  let h = 0;
+  for (let i = 0; i < evidenceId.length; i++) {
+    h = (Math.imul(31, h) + evidenceId.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h).toString(16).padStart(8, "0").toUpperCase();
+}
 
 interface CopyVerifyResult {
   evidence_id: string;
@@ -40,16 +62,30 @@ export default function VerifyPublic() {
   const [chainTestResult, setChainTestResult] = useState<ChainTestResult | null>(null);
   const [chainTestChecking, setChainTestChecking] = useState<"missing" | "reorder" | null>(null);
 
+  const [demoFallback, setDemoFallback] = useState<{ evidenceId: string; fingerprint: string } | null>(null);
+
   const runVerification = async (id: string) => {
     setLoading(true);
     setError(null);
     setResult(null);
     setCopyResult(null);
+    setDemoFallback(null);
+    const trimmed = id.trim();
     try {
-      const { data } = await api.get(`/evidence/${id.trim()}/verify`);
+      const { data } = await api.get(`/evidence/${trimmed}/verify`);
       setResult(data);
-    } catch {
-      setError("Could not find or verify that evidence ID.");
+    } catch (err: unknown) {
+      const hasResponse = !!(err && typeof err === "object" && "response" in err && (err as { response?: unknown }).response);
+      if (!hasResponse) {
+        // No response at all reached us -- the backend is genuinely
+        // unreachable from this device (classic case: a phone scanning a
+        // QR that points at a localhost URL only the original PC can
+        // resolve). Show a clearly labeled demo fallback instead of a bare
+        // error, so the QR is still useful for a live demonstration.
+        setDemoFallback({ evidenceId: trimmed, fingerprint: deriveDemoFingerprint(trimmed) });
+      } else {
+        setError("Could not find or verify that evidence ID.");
+      }
     } finally {
       setLoading(false);
     }
@@ -132,6 +168,33 @@ export default function VerifyPublic() {
         </form>
 
         {error && <p className="text-xs text-danger-500 text-center font-mono mb-4">{error}</p>}
+
+        {demoFallback && (
+          <div className="glass-panel border border-warn-500/40 rounded-2xl p-6 mb-6">
+            <div className="flex items-center gap-2 mb-4 pb-4 border-b border-ink-800">
+              <WifiOff size={18} className="text-warn-500" />
+              <div>
+                <div className="mono text-xs font-bold text-warn-500 tracking-wide">DEMO VERIFICATION — PROTOTYPE DATA</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">
+                  This device could not reach the CrimeLens backend, so no real evidence data is available here.
+                  The values below are a clearly-labeled offline placeholder, not real blockchain or evidence data.
+                </div>
+              </div>
+            </div>
+            <dl className="grid grid-cols-2 gap-3 text-xs mono">
+              <div><dt className="text-slate-500">Mode</dt><dd className="text-warn-500 font-bold">DEMO / PROTOTYPE</dd></div>
+              <div><dt className="text-slate-500">Evidence ID</dt><dd className="text-slate-300 break-all">{demoFallback.evidenceId}</dd></div>
+              <div><dt className="text-slate-500">Evidence Type</dt><dd className="text-slate-300">Video</dd></div>
+              <div><dt className="text-slate-500">Hash</dt><dd className="text-slate-300">DEMO-HASH-{demoFallback.fingerprint}</dd></div>
+              <div><dt className="text-slate-500">Integrity</dt><dd className="text-warn-500">DEMO VERIFIED</dd></div>
+              <div><dt className="text-slate-500">Blockchain</dt><dd className="text-warn-500">DEMO DATA</dd></div>
+            </dl>
+            <p className="text-[11px] text-slate-600 mt-4">
+              To see the real hash, custody chain, and blockchain anchor for this evidence, open this same link on
+              a device that can reach the CrimeLens backend (the same machine/network it's running on).
+            </p>
+          </div>
+        )}
 
         {result && (
           <div className="space-y-6">
