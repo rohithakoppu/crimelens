@@ -734,8 +734,16 @@ function BlockchainPillarCard({ status }: { status: EvidenceRecord["blockchain_s
     PENDING: { ok: false, label: "Anchor Pending" },
     UNAVAILABLE: { ok: false, label: "Anchor Unavailable" },
     FAILED: { ok: false, label: "Anchor Failed" },
+    NOT_APPLICABLE: { ok: false, label: "Not Anchored (Derived Copy)" },
   } as const;
-  const { ok, label } = map[status];
+  // Real root cause of a blank-page crash on any derived/edited evidence
+  // record: this map previously had no NOT_APPLICABLE entry (the real
+  // status /derive and /edit set), so `map[status]` was undefined and
+  // destructuring it threw -- with no error boundary anywhere in the app,
+  // that uncaught exception unmounted the entire page to blank. The
+  // fallback below also covers any future/unexpected status honestly
+  // instead of crashing again.
+  const { ok, label } = map[status] ?? { ok: false, label: status ?? "Unknown" };
   return (
     <div className={`rounded-xl border p-3 ${ok ? "border-purple-500/30 bg-purple-500/5" : "border-ink-600 bg-ink-900"}`}>
       <ShieldCheck size={14} className={ok ? "text-purple-500" : "text-slate-600"} />

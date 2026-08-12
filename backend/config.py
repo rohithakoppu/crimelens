@@ -82,6 +82,13 @@ class Settings(BaseSettings):
     # Used to build the public verification URL embedded in QR codes.
     frontend_base_url: str = "http://localhost:5173"
 
+    # Optional: a single extra CORS origin for local-network-only demos (e.g.
+    # "http://192.168.1.42:5173") so a phone on the same Wi-Fi can load the
+    # frontend and call this API to scan a real QR code. Empty by default --
+    # localhost-only CORS is unchanged unless this is explicitly set in .env.
+    # Never a wildcard, never a public origin.
+    lan_demo_origin: str = ""
+
     # Upload size ceiling for evidence files/segments -- real, enforced
     # policy limit (413 Payload Too Large past this), not merely
     # aspirational. 200MB comfortably covers a 15s 720p WebM chunk many

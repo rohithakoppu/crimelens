@@ -47,7 +47,7 @@ export interface TimelineEvent {
   [key: string]: unknown;
 }
 
-export type BlockchainStatus = "PENDING" | "CONFIRMED" | "UNAVAILABLE" | "FAILED";
+export type BlockchainStatus = "PENDING" | "CONFIRMED" | "UNAVAILABLE" | "FAILED" | "NOT_APPLICABLE";
 
 export interface EvidenceRecord {
   evidence_id: string;
