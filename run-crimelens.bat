@@ -10,16 +10,45 @@ REM  This script is fully portable: it never assumes a specific username,
 REM  drive letter, or folder location. Every path is derived from %~dp0 (the
 REM  folder this file itself lives in) or is relative to it, so it works the
 REM  same way regardless of where the project was cloned/extracted, on any
-REM  Windows account.
+REM  Windows account -- including folders with spaces AND folders with
+REM  parentheses in the name (e.g. "Downloads\crimelens-main (1)", which is
+REM  what Windows Explorer names a second copy of the same download).
+REM
+REM  IMPORTANT: every path-derived variable below (ROOT_DIR, BACKEND_DIR,
+REM  FRONTEND_DIR, and everything built from them) is expanded with delayed
+REM  expansion, i.e. "!VAR!" rather than "%VAR%", everywhere it appears next
+REM  to an "if (...)" or "for ... (...)" block. cmd.exe's block parser scans
+REM  for matching parentheses using the literal, already-substituted text
+REM  when you use "%VAR%", so a project folder containing so much as one
+REM  "(" or ")" (e.g. "(1)") silently breaks every "if ... ( ... )" block
+REM  that mentions it, aborting the whole script instantly with an error
+REM  like "\backend was unexpected at this time." and no chance to show a
+REM  message. Delayed expansion ("!VAR!") defers substitution until each
+REM  line actually runs, after block parsing is done, so it is immune to
+REM  this. Do not change any "!VAR!" below back to "%VAR%".
 REM ============================================================================
+
+REM ----------------------------------------------------------------------------
+REM SECTION 0: Guarantee the window can never vanish before you can read it.
+REM Double-clicking a .bat runs it as "cmd.exe /c file.bat", and /c closes the
+REM window the instant the script stops -- for ANY reason, including a raw
+REM batch-parser crash that skips every "pause" in the file. To make that
+REM impossible, we immediately relaunch ourselves once under "cmd /k", which
+REM keeps its window open no matter how the script inside it ends.
+REM ----------------------------------------------------------------------------
+set "SELF=%~f0"
+if /I not "%~1"=="__RUN__" (
+    start "CrimeLens - Launcher" cmd /k ""!SELF!" __RUN__"
+    exit /b 0
+)
 
 title CrimeLens - Launcher
 
 REM ----------------------------------------------------------------------------
 REM SECTION 1: Locate the project root from THIS .bat file's own location.
 REM %~dp0 always expands to "the folder this script lives in", with a
-REM trailing backslash, and works correctly even if the path contains spaces
-REM (as long as we keep quoting it below).
+REM trailing backslash, regardless of the current working directory the
+REM script was launched from.
 REM ----------------------------------------------------------------------------
 set "ROOT_DIR=%~dp0"
 set "BACKEND_DIR=%ROOT_DIR%backend"
@@ -34,29 +63,30 @@ set "LAUNCH_PS1=%ROOT_DIR%.crimelens_launch.ps1"
 
 echo ============================================================
 echo   CrimeLens - Starting up
-echo   Project root: %ROOT_DIR%
+echo   Project root: !ROOT_DIR!
 echo ============================================================
 echo.
 
 REM ----------------------------------------------------------------------------
 REM SECTION 2: Sanity-check the project structure before doing anything else.
 REM ----------------------------------------------------------------------------
-if not exist "%BACKEND_DIR%\main.py" (
+if not exist "!BACKEND_DIR!\main.py" (
     echo [ERROR] Could not find backend\main.py under:
-    echo         %BACKEND_DIR%
+    echo         !BACKEND_DIR!
     echo         This launcher must stay in the CrimeLens project root,
     echo         next to the "backend" and "frontend" folders.
     goto :FAIL
 )
-if not exist "%FRONTEND_DIR%\package.json" (
+if not exist "!FRONTEND_DIR!\package.json" (
     echo [ERROR] Could not find frontend\package.json under:
-    echo         %FRONTEND_DIR%
+    echo         !FRONTEND_DIR!
     goto :FAIL
 )
 
 REM ----------------------------------------------------------------------------
 REM SECTION 3: Check that Node.js and npm are installed and on PATH.
 REM ----------------------------------------------------------------------------
+echo [CHECK] Checking Node.js / npm...
 where node >nul 2>nul
 if errorlevel 1 (
     echo [ERROR] Node.js was not found on your PATH.
@@ -69,6 +99,7 @@ if errorlevel 1 (
     echo         Reinstall Node.js from https://nodejs.org and re-run this launcher.
     goto :FAIL
 )
+echo [OK] Node.js / npm found.
 
 REM ----------------------------------------------------------------------------
 REM SECTION 4: Find a working Python interpreter on PATH.
@@ -78,6 +109,7 @@ REM run), while the real interpreter is only reachable via the "py" launcher
 REM that the official python.org installer registers. We probe both and use
 REM whichever one actually runs Python code.
 REM ----------------------------------------------------------------------------
+echo [CHECK] Checking Python...
 set "PYTHON_CMD="
 where python >nul 2>nul
 if not errorlevel 1 (
@@ -100,6 +132,7 @@ if not defined PYTHON_CMD (
     echo         installer above instead.
     goto :FAIL
 )
+echo [OK] Python found ^(!PYTHON_CMD!^).
 
 REM ----------------------------------------------------------------------------
 REM SECTION 5: Ensure .env configuration files exist (created from the
@@ -108,18 +141,18 @@ REM Real secrets are never committed to the repo; without them the app still
 REM starts and runs, with every Firebase/Algorand-backed feature honestly
 REM reporting "not configured" instead of failing to start or faking success.
 REM ----------------------------------------------------------------------------
-if not exist "%BACKEND_DIR%\.env" (
-    if exist "%BACKEND_DIR%\.env.example" (
-        copy /Y "%BACKEND_DIR%\.env.example" "%BACKEND_DIR%\.env" >nul
+if not exist "!BACKEND_DIR!\.env" (
+    if exist "!BACKEND_DIR!\.env.example" (
+        copy /Y "!BACKEND_DIR!\.env.example" "!BACKEND_DIR!\.env" >nul
         echo [SETUP] Created backend\.env from backend\.env.example.
         echo          Fill in real Firebase/Algorand credentials there later for full
         echo          functionality - the app works without them, just with those
         echo          features honestly showing as "not configured".
     )
 )
-if not exist "%FRONTEND_DIR%\.env" (
-    if exist "%FRONTEND_DIR%\.env.example" (
-        copy /Y "%FRONTEND_DIR%\.env.example" "%FRONTEND_DIR%\.env" >nul
+if not exist "!FRONTEND_DIR!\.env" (
+    if exist "!FRONTEND_DIR!\.env.example" (
+        copy /Y "!FRONTEND_DIR!\.env.example" "!FRONTEND_DIR!\.env" >nul
         echo [SETUP] Created frontend\.env from frontend\.env.example.
         echo          Fill in VITE_FIREBASE_* there later to enable Google/email sign-in.
     )
@@ -130,9 +163,10 @@ REM SECTION 6: Check/prepare the backend Python virtual environment.
 REM If backend\venv doesn't exist yet, create it, then install requirements.txt.
 REM If it already exists, we reuse it as-is (never recreated on every run).
 REM ----------------------------------------------------------------------------
-if not exist "%VENV_PY%" (
+echo [CHECK] Checking backend dependencies...
+if not exist "!VENV_PY!" (
     echo [SETUP] No virtual environment found at backend\venv - creating one now...
-    %PYTHON_CMD% -m venv "%BACKEND_DIR%\venv"
+    !PYTHON_CMD! -m venv "!BACKEND_DIR!\venv"
     if errorlevel 1 (
         echo [ERROR] Failed to create the Python virtual environment.
         goto :FAIL
@@ -145,22 +179,22 @@ REM We reinstall only when requirements.txt is newer than our own marker
 REM file, or the marker doesn't exist yet - not on every single launch.
 REM ----------------------------------------------------------------------------
 set "NEED_BACKEND_INSTALL=0"
-if not exist "%DEPS_MARKER%" set "NEED_BACKEND_INSTALL=1"
-if exist "%DEPS_MARKER%" (
+if not exist "!DEPS_MARKER!" set "NEED_BACKEND_INSTALL=1"
+if exist "!DEPS_MARKER!" (
     powershell -NoProfile -Command ^
-      "if ((Get-Item '%BACKEND_DIR%\requirements.txt').LastWriteTime -gt (Get-Item '%DEPS_MARKER%').LastWriteTime) { exit 1 } else { exit 0 }"
+      "if ((Get-Item '!BACKEND_DIR!\requirements.txt').LastWriteTime -gt (Get-Item '!DEPS_MARKER!').LastWriteTime) { exit 1 } else { exit 0 }"
     if errorlevel 1 set "NEED_BACKEND_INSTALL=1"
 )
 
-if "%NEED_BACKEND_INSTALL%"=="1" (
-    echo [SETUP] Installing/updating backend dependencies from requirements.txt...
+if "!NEED_BACKEND_INSTALL!"=="1" (
+    echo [SETUP] Installing/checking backend dependencies from requirements.txt...
     echo         ^(this only happens when needed, not on every run^)
-    "%VENV_PY%" -m pip install --disable-pip-version-check -q -r "%BACKEND_DIR%\requirements.txt"
+    "!VENV_PY!" -m pip install --disable-pip-version-check -q -r "!BACKEND_DIR!\requirements.txt"
     if errorlevel 1 (
         echo [ERROR] Failed to install backend dependencies. See the pip output above.
         goto :FAIL
     )
-    echo done> "%DEPS_MARKER%"
+    echo done> "!DEPS_MARKER!"
 ) else (
     echo [OK] Backend dependencies already installed, skipping.
 )
@@ -168,13 +202,13 @@ if "%NEED_BACKEND_INSTALL%"=="1" (
 REM ----------------------------------------------------------------------------
 REM SECTION 8: Install frontend dependencies only if node_modules is missing.
 REM ----------------------------------------------------------------------------
-if not exist "%FRONTEND_DIR%\node_modules" (
-    echo [SETUP] Installing frontend dependencies ^(npm install^)...
-    pushd "%FRONTEND_DIR%"
+if not exist "!FRONTEND_DIR!\node_modules" (
+    echo [SETUP] Installing/checking frontend dependencies ^(npm install^)...
+    pushd "!FRONTEND_DIR!"
     call npm install
-    set "NPM_INSTALL_ERR=%errorlevel%"
+    set "NPM_INSTALL_ERR=!errorlevel!"
     popd
-    if not "%NPM_INSTALL_ERR%"=="0" (
+    if not "!NPM_INSTALL_ERR!"=="0" (
         echo [ERROR] npm install failed. See the output above.
         goto :FAIL
     )
@@ -185,7 +219,7 @@ if not exist "%FRONTEND_DIR%\node_modules" (
 REM ----------------------------------------------------------------------------
 REM SECTION 9: Make sure the local evidence storage directory exists.
 REM ----------------------------------------------------------------------------
-if not exist "%BACKEND_DIR%\data\evidence" mkdir "%BACKEND_DIR%\data\evidence" >nul 2>nul
+if not exist "!BACKEND_DIR!\data\evidence" mkdir "!BACKEND_DIR!\data\evidence" >nul 2>nul
 
 echo.
 echo ============================================================
@@ -198,8 +232,9 @@ REM We check the port first so double-clicking this launcher twice never
 REM spawns a duplicate backend (which would just crash with "port already
 REM in use" anyway).
 REM ----------------------------------------------------------------------------
+echo [START] Starting backend...
 call :CHECK_HTTP "http://localhost:8000/health" 2
-if "%HTTP_OK%"=="1" (
+if "!HTTP_OK!"=="1" (
     echo [OK] Backend already running and healthy at http://localhost:8000 - reusing it.
 ) else (
     netstat -ano | findstr ":8000" | findstr "LISTENING" >nul 2>nul
@@ -212,24 +247,25 @@ if "%HTTP_OK%"=="1" (
     echo [START] Launching backend ^(FastAPI / uvicorn^) in its own window...
     REM A tiny generated .cmd file avoids fragile nested-quote escaping when
     REM building a one-line "cmd /k ..." command from paths that may contain
-    REM spaces - each line below is parsed normally, with no quote-doubling.
-    > "%BACKEND_RUNNER%" echo @echo off
-    >> "%BACKEND_RUNNER%" echo title CrimeLens-Backend
-    >> "%BACKEND_RUNNER%" echo cd /d "%BACKEND_DIR%"
-    >> "%BACKEND_RUNNER%" echo "%VENV_PY%" -m uvicorn main:app --reload --port 8000
+    REM spaces or parentheses - each line below is parsed normally, with no
+    REM quote-doubling and no compound "( )" blocks to break.
+    > "!BACKEND_RUNNER!" echo @echo off
+    >> "!BACKEND_RUNNER!" echo title CrimeLens-Backend
+    >> "!BACKEND_RUNNER!" echo cd /d "!BACKEND_DIR!"
+    >> "!BACKEND_RUNNER!" echo "!VENV_PY!" -m uvicorn main:app --reload --port 8000
 
     REM Launched via a small PowerShell helper using Start-Process -PassThru,
     REM which hands back the REAL process id straight from Windows -- far
     REM more reliable than trying to re-find the window afterwards by title
     REM (title matching breaks: cmd.exe alters the title it's given, and
     REM uvicorn's reloader can spawn a child process too).
-    for /f %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%LAUNCH_PS1%" -ScriptPath "%BACKEND_RUNNER%" -PidFile "%BACKEND_PID_FILE%"') do set "BACKEND_PID=%%P"
+    for /f %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -File "!LAUNCH_PS1!" -ScriptPath "!BACKEND_RUNNER!" -PidFile "!BACKEND_PID_FILE!"') do set "BACKEND_PID=%%P"
 
     echo [WAIT] Waiting for backend health check at http://localhost:8000/health ...
     set "WAITED=0"
     :WAIT_BACKEND
     call :CHECK_HTTP "http://localhost:8000/health" 2
-    if "%HTTP_OK%"=="1" goto :BACKEND_READY
+    if "!HTTP_OK!"=="1" goto :BACKEND_READY
     set /a WAITED+=1
     if !WAITED! GEQ 60 (
         echo [ERROR] Backend did not become healthy within 60 seconds.
@@ -247,8 +283,9 @@ if "%HTTP_OK%"=="1" (
 REM ----------------------------------------------------------------------------
 REM SECTION 11: Start the frontend - same "don't start a duplicate" logic.
 REM ----------------------------------------------------------------------------
+echo [START] Starting frontend...
 call :CHECK_HTTP "http://localhost:5173" 2
-if "%HTTP_OK%"=="1" (
+if "!HTTP_OK!"=="1" (
     echo [OK] Frontend already running at http://localhost:5173 - reusing it.
 ) else (
     netstat -ano | findstr ":5173" | findstr "LISTENING" >nul 2>nul
@@ -259,19 +296,19 @@ if "%HTTP_OK%"=="1" (
     )
 
     echo [START] Launching frontend ^(Vite dev server^) in its own window...
-    > "%FRONTEND_RUNNER%" echo @echo off
-    >> "%FRONTEND_RUNNER%" echo title CrimeLens-Frontend
-    >> "%FRONTEND_RUNNER%" echo cd /d "%FRONTEND_DIR%"
-    >> "%FRONTEND_RUNNER%" echo call npm run dev
+    > "!FRONTEND_RUNNER!" echo @echo off
+    >> "!FRONTEND_RUNNER!" echo title CrimeLens-Frontend
+    >> "!FRONTEND_RUNNER!" echo cd /d "!FRONTEND_DIR!"
+    >> "!FRONTEND_RUNNER!" echo call npm run dev
 
-    for /f %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%LAUNCH_PS1%" -ScriptPath "%FRONTEND_RUNNER%" -PidFile "%FRONTEND_PID_FILE%"') do set "FRONTEND_PID=%%P"
+    for /f %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -File "!LAUNCH_PS1!" -ScriptPath "!FRONTEND_RUNNER!" -PidFile "!FRONTEND_PID_FILE!"') do set "FRONTEND_PID=%%P"
 
     echo [WAIT] Waiting for the frontend to respond at http://localhost:5173 ...
     echo        ^(NOT a fixed timer - actually polling until it answers^)
     set "WAITED=0"
     :WAIT_FRONTEND
     call :CHECK_HTTP "http://localhost:5173" 2
-    if "%HTTP_OK%"=="1" goto :FRONTEND_READY
+    if "!HTTP_OK!"=="1" goto :FRONTEND_READY
     set /a WAITED+=1
     if !WAITED! GEQ 60 (
         echo [ERROR] Frontend did not respond within 60 seconds.
@@ -314,7 +351,9 @@ exit /b 0
 
 REM ----------------------------------------------------------------------------
 REM Shared failure exit: always pause so a beginner double-clicking this file
-REM can actually read the error before the window disappears.
+REM can actually read the error before the window disappears. (Belt-and-
+REM braces: SECTION 0's "cmd /k" relaunch already keeps the window open even
+REM if this line is somehow never reached.)
 REM ----------------------------------------------------------------------------
 :FAIL
 echo.
