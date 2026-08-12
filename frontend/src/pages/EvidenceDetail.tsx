@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, FileDown, CheckCircle2, XCircle, Loader2, History, ExternalLink, ShieldCheck, KeyRound, Lock,
-  Cloud, CloudOff, Link2, QrCode, PlayCircle, Copy,
+  Cloud, CloudOff, Link2, QrCode, PlayCircle, Copy, Pencil, GitCompareArrows, AlertOctagon,
 } from "lucide-react";
 import {
   api, API_BASE_URL, type EvidenceRecord, type VerifyResult, type CustodyEvent, type CustodyChainStatus,
   type EvidenceSegment, type SegmentChainStatus, type BlockchainProofResult,
 } from "../lib/api";
+import { WebCameraSource } from "../lib/cameraSource";
 
 interface AIResultRow {
   type: string;
@@ -34,6 +35,18 @@ export default function EvidenceDetail() {
   const [blockchainProof, setBlockchainProof] = useState<BlockchainProofResult | null>(null);
   const [anchoring, setAnchoring] = useState(false);
   const [deriving, setDeriving] = useState(false);
+
+  // ---- Prototype: edit-a-copy hash demonstration -------------------------
+  const [showEdit, setShowEdit] = useState(false);
+  const [previewDuration, setPreviewDuration] = useState<number | null>(null);
+  const [trimStart, setTrimStart] = useState(0);
+  const [trimEnd, setTrimEnd] = useState(0);
+  const [editStage, setEditStage] = useState<"idle" | "recording" | "hashing" | "uploading" | "done" | "error">("idle");
+  const [editProgress, setEditProgress] = useState(0);
+  const [editedHash, setEditedHash] = useState<string | null>(null);
+  const [editedResult, setEditedResult] = useState<EvidenceRecord | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const editCaptureRef = useRef<HTMLVideoElement | null>(null);
 
   const load = () => {
     if (!evidenceId) return;
@@ -119,6 +132,87 @@ export default function EvidenceDetail() {
     }
   };
 
+  // Real, non-destructive prototype edit: trims the ORIGINAL video (read
+  // from the already-loaded playback blob, never re-touching the stored
+  // file) to [trimStart, trimEnd] by actually playing that range through a
+  // hidden <video> and re-recording it with the browser's real
+  // captureStream()/MediaRecorder APIs -- the same genuine technique
+  // PrototypeEvidence.tsx uses to turn a pre-recorded file into real
+  // evidence bytes. The result is a real, different video file; its SHA-256
+  // is computed from those actual bytes, never fabricated. Uploaded via
+  // POST /evidence/{id}/edit, which stores it as a brand-new evidence
+  // record (never touching the original's file/hash/custody chain).
+  const generateEditedVersion = async () => {
+    if (!videoUrl || !evidenceId || trimEnd <= trimStart) return;
+    setEditError(null);
+    setEditedHash(null);
+    setEditedResult(null);
+    setEditStage("recording");
+    setEditProgress(0);
+    try {
+      const captureEl = editCaptureRef.current;
+      if (!captureEl) throw new Error("Capture element unavailable.");
+      captureEl.src = videoUrl;
+      captureEl.muted = true;
+      await captureEl.play();
+      captureEl.currentTime = trimStart;
+      await new Promise<void>((resolve) => {
+        const onSeeked = () => {
+          captureEl.removeEventListener("seeked", onSeeked);
+          resolve();
+        };
+        captureEl.addEventListener("seeked", onSeeked);
+      });
+
+      const mediaCaptureEl = captureEl as HTMLVideoElement & { captureStream?: () => MediaStream };
+      if (!mediaCaptureEl.captureStream) {
+        throw new Error("This browser does not support HTMLVideoElement.captureStream(), which the trim feature needs.");
+      }
+      const stream = mediaCaptureEl.captureStream();
+      const mimeType = new WebCameraSource().pickMimeType();
+      const recorder = new MediaRecorder(stream, { mimeType });
+      const chunks: BlobPart[] = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      const recordedBlob = await new Promise<Blob>((resolve, reject) => {
+        recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
+        recorder.onerror = () => reject(new Error("Recording the trimmed segment failed."));
+        captureEl.ontimeupdate = () => {
+          const span = trimEnd - trimStart;
+          setEditProgress(span > 0 ? Math.min(1, (captureEl.currentTime - trimStart) / span) : 0);
+          if (captureEl.currentTime >= trimEnd) {
+            captureEl.ontimeupdate = null;
+            if (recorder.state === "recording") recorder.stop();
+            captureEl.pause();
+          }
+        };
+        recorder.start();
+      });
+
+      if (recordedBlob.size === 0) throw new Error("The trimmed recording produced no data -- try a longer trim range.");
+
+      setEditStage("hashing");
+      const digest = await crypto.subtle.digest("SHA-256", await recordedBlob.arrayBuffer());
+      const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+      setEditedHash(hex);
+
+      setEditStage("uploading");
+      const form = new FormData();
+      form.append("edit_description", `Trimmed to ${trimStart.toFixed(1)}s-${trimEnd.toFixed(1)}s`);
+      form.append("file", recordedBlob, `${evidenceId}-edited.webm`);
+      const { data } = await api.post<EvidenceRecord>(`/evidence/${evidenceId}/edit`, form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setEditedResult(data);
+      setEditStage("done");
+    } catch (err: unknown) {
+      setEditError(err instanceof Error ? err.message : "Edit generation failed.");
+      setEditStage("error");
+    }
+  };
+
   if (loading) return <div className="p-8 text-sm text-slate-500">Loading evidence...</div>;
   if (!evidence) return <div className="p-8 text-sm text-slate-500">Evidence not found.</div>;
 
@@ -132,12 +226,18 @@ export default function EvidenceDetail() {
       </Link>
 
       {evidence.is_derived && (
-        <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-warn-500/10 border border-warn-500/30 text-xs text-warn-500 mb-4 font-mono font-semibold">
-          <Copy size={14} className="shrink-0" /> DERIVED COPY — NOT ORIGINAL EVIDENCE
-          {evidence.original_evidence_id && (
-            <Link to={`/evidence/${evidence.original_evidence_id}`} className="underline ml-1">
-              (view original)
-            </Link>
+        <div className="flex flex-col gap-1 px-4 py-2.5 rounded-xl bg-warn-500/10 border border-warn-500/30 text-xs text-warn-500 mb-4 font-mono font-semibold">
+          <div className="flex items-center gap-2">
+            <Copy size={14} className="shrink-0" />
+            {evidence.edit_description ? "EDITED COPY — NOT ORIGINAL EVIDENCE" : "DERIVED COPY — NOT ORIGINAL EVIDENCE"}
+            {evidence.original_evidence_id && (
+              <Link to={`/evidence/${evidence.original_evidence_id}`} className="underline ml-1">
+                (view original)
+              </Link>
+            )}
+          </div>
+          {evidence.edit_description && (
+            <div className="text-[10px] font-normal text-slate-400 pl-6">Edit applied: {evidence.edit_description}</div>
           )}
         </div>
       )}
@@ -160,6 +260,15 @@ export default function EvidenceDetail() {
               className="flex items-center gap-2 bg-ink-800 hover:bg-ink-700 border border-ink-700 text-xs rounded-xl px-3 py-2 transition-colors text-slate-300 disabled:opacity-40"
             >
               {deriving ? <Loader2 size={13} className="animate-spin" /> : <Copy size={13} />} Create Derived Copy
+            </button>
+          )}
+          {!evidence.is_derived && evidence.storage_status === "STORED" && (
+            <button
+              onClick={() => setShowEdit((v) => !v)}
+              title="Prototype: creates an actually-edited (trimmed) copy on a separate evidence record, to demonstrate that modifying content changes its cryptographic hash. The original file is never touched."
+              className="flex items-center gap-2 bg-warn-500/10 hover:bg-warn-500/20 border border-warn-500/30 text-xs rounded-xl px-3 py-2 transition-colors text-warn-500"
+            >
+              <Pencil size={13} /> Edit (Prototype)
             </button>
           )}
           <button
@@ -204,7 +313,18 @@ export default function EvidenceDetail() {
          only on a genuine local write failure. */}
       <div className="bg-black rounded-2xl overflow-hidden border border-ink-700 mb-6 aspect-video flex items-center justify-center">
         {evidence.storage_status === "STORED" && videoUrl ? (
-          <video src={videoUrl} controls className="w-full h-full" />
+          <video
+            src={videoUrl}
+            controls
+            className="w-full h-full"
+            onLoadedMetadata={(e) => {
+              const d = e.currentTarget.duration;
+              if (isFinite(d) && d > 0) {
+                setPreviewDuration(d);
+                setTrimEnd((prev) => (prev > 0 ? prev : Math.min(d, Math.max(1, d / 2))));
+              }
+            }}
+          />
         ) : evidence.storage_status === "STORED" ? (
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <Loader2 size={14} className="animate-spin" /> Loading stored file...
@@ -219,6 +339,93 @@ export default function EvidenceDetail() {
           </div>
         )}
       </div>
+
+      <video ref={editCaptureRef} className="hidden" playsInline muted />
+
+      {showEdit && (
+        <div className="glass-panel rounded-2xl p-5 mb-6 border border-warn-500/30">
+          <div className="mono text-[10px] uppercase tracking-[.18em] text-warn-500 mb-3 flex items-center gap-1.5">
+            <Pencil size={13} /> Edit Evidence (Prototype) — Hash-Change Demonstration
+          </div>
+          <p className="text-[11px] text-slate-500 mb-4">
+            Trims a real copy of this video to the range below and uploads it as a brand-new evidence record. The
+            original file at <span className="mono">{evidence.evidence_id}</span> is never modified -- this only
+            demonstrates that changing the actual bytes changes the cryptographic hash.
+          </p>
+
+          <div className="rounded-xl bg-ink-900/60 p-3 mb-4">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Original Evidence Hash</div>
+            <div className="mono text-xs text-slate-300 break-all">{evidence.sha256}</div>
+          </div>
+
+          {previewDuration ? (
+            <div className="mb-4">
+              <div className="flex items-center justify-between text-[11px] text-slate-500 mb-2">
+                <span>Trim range</span>
+                <span className="mono">{trimStart.toFixed(1)}s – {trimEnd.toFixed(1)}s of {previewDuration.toFixed(1)}s</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range" min={0} max={previewDuration} step={0.1} value={trimStart}
+                  disabled={editStage === "recording" || editStage === "hashing" || editStage === "uploading"}
+                  onChange={(e) => setTrimStart(Math.min(Number(e.target.value), trimEnd - 0.5))}
+                  className="flex-1"
+                />
+                <input
+                  type="range" min={0} max={previewDuration} step={0.1} value={trimEnd}
+                  disabled={editStage === "recording" || editStage === "hashing" || editStage === "uploading"}
+                  onChange={(e) => setTrimEnd(Math.max(Number(e.target.value), trimStart + 0.5))}
+                  className="flex-1"
+                />
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-600 mb-4">Waiting for the original video's real duration to load...</p>
+          )}
+
+          <button
+            onClick={generateEditedVersion}
+            disabled={!previewDuration || editStage === "recording" || editStage === "hashing" || editStage === "uploading"}
+            className="flex items-center gap-2 bg-warn-500 hover:bg-warn-500/80 text-ink-950 font-bold text-xs rounded-xl px-4 py-2.5 disabled:opacity-50 transition-colors"
+          >
+            {(editStage === "recording" || editStage === "hashing" || editStage === "uploading") && <Loader2 size={13} className="animate-spin" />}
+            {editStage === "recording" && `Recording trim... ${(editProgress * 100).toFixed(0)}%`}
+            {editStage === "hashing" && "Hashing..."}
+            {editStage === "uploading" && "Uploading edited copy..."}
+            {(editStage === "idle" || editStage === "done" || editStage === "error") && "Save / Generate Edited Version"}
+          </button>
+
+          {editError && (
+            <p className="text-xs text-danger-500 mt-3 flex items-center gap-1.5"><AlertOctagon size={13} /> {editError}</p>
+          )}
+
+          {editedResult && editedHash && (
+            <div className="mt-5">
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div className="rounded-xl border border-ink-700 bg-ink-900/60 p-3 text-xs">
+                  <div className="mono text-[10px] uppercase tracking-wider text-slate-500 mb-2">Original Evidence Hash</div>
+                  <div className="mono text-slate-300 break-all">{evidence.sha256}</div>
+                </div>
+                <div className="rounded-xl border border-warn-500/30 bg-warn-500/5 p-3 text-xs">
+                  <div className="mono text-[10px] uppercase tracking-wider text-warn-500 mb-2">Modified Evidence Hash</div>
+                  <div className="mono text-slate-300 break-all">{editedHash}</div>
+                </div>
+              </div>
+              <div className="mt-3 rounded-xl bg-ink-900/60 p-3 text-xs flex items-center gap-2">
+                <GitCompareArrows size={14} className="text-warn-500" />
+                <span className="font-bold text-warn-500">Hash Changed: YES</span>
+                <span className="text-slate-500">— the edited copy's content differs from the original, so its SHA-256 differs too.</span>
+              </div>
+              <Link
+                to={`/evidence/${editedResult.evidence_id}`}
+                className="flex items-center justify-center gap-2 text-xs text-warn-500 hover:underline mt-4 py-2"
+              >
+                Open edited/derived evidence record ({editedResult.evidence_id}) →
+              </Link>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Integrity pillars */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">

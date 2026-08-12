@@ -501,6 +501,14 @@ export default function LiveCamera() {
                   {rootEvidence.evidence_id}
                 </Link>
               )}
+              {rootEvidence && !recording && (
+                <Link
+                  to={`/evidence/${rootEvidence.evidence_id}`}
+                  className="flex items-center justify-center gap-2 bg-accent-500 hover:bg-accent-600 text-ink-950 font-bold text-xs rounded-xl px-3 py-2.5 mb-2 transition-colors"
+                >
+                  View Evidence Detail →
+                </Link>
+              )}
               {chainStatus ? (
                 <div className={`text-xs flex items-center gap-2 ${chainStatus.intact ? "text-accent-500" : "text-danger-500"}`}>
                   {chainStatus.intact ? <ShieldCheck size={13} /> : <AlertTriangle size={13} />}

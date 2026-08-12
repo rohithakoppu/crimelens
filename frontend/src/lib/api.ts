@@ -66,6 +66,7 @@ export interface EvidenceRecord {
   revoked: boolean;
   is_derived?: boolean;
   original_evidence_id?: string | null;
+  edit_description?: string | null;
 }
 
 export interface CustodyChainStatus {

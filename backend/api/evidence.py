@@ -316,6 +316,88 @@ def create_derived_copy(evidence_id: str, user: dict = Depends(require_roles("ad
     return derived
 
 
+@router.post("/{evidence_id}/edit")
+async def create_edited_copy(
+    evidence_id: str,
+    file: UploadFile = File(...),
+    edit_description: str = Form(...),
+    user: dict = Depends(require_roles("admin", "investigator")),
+):
+    """Prototype integrity demonstration: uploads an ALREADY-MODIFIED copy
+    (e.g. a client-side-trimmed video) and stores it as a brand-new evidence
+    record, exactly like /derive -- new evidence_id, new encrypted storage
+    object, is_derived=True/original_evidence_id=<original>. The only
+    difference from /derive is that the bytes stored here are whatever the
+    caller actually uploaded (genuinely different content), not a
+    byte-for-byte copy of the original, so its SHA-256 is real and
+    necessarily different from the original's.
+
+    The original evidence's file, hash, signature, root hash, segment
+    chain, and blockchain anchor are never read for writing and never
+    modified -- only a custody event is appended to its trail, same as
+    /derive. No blockchain anchor is attempted for the edited copy
+    (blockchain_status=NOT_APPLICABLE), per the same policy /derive already
+    uses -- editing a demonstration copy must never silently spend real
+    testnet ALGO or create an unexpected anchor transaction.
+    """
+    original = repo.get_evidence(evidence_id)
+    if original is None:
+        raise HTTPException(status_code=404, detail="Evidence not found")
+
+    raw = await _read_upload_within_limit(file)
+    edited_hash = sha256_bytes(raw)
+
+    if edited_hash == original["sha256"]:
+        raise HTTPException(
+            status_code=400,
+            detail="The uploaded file is byte-identical to the original evidence -- no actual edit was made.",
+        )
+
+    edited_id = generate_evidence_id()
+    storage_path = _storage_path(original["case_id"], edited_id)
+
+    storage_status = "PENDING"
+    storage_error = None
+    storage_uri = None
+    try:
+        store = get_object_store()
+        storage_uri = store.put_encrypted(storage_path, raw)
+        storage_status = "STORED"
+    except ObjectStoreUnavailableError as exc:
+        storage_status = "UNAVAILABLE"
+        storage_error = str(exc)
+
+    edited = repo.create_evidence(
+        edited_id,
+        case_id=original["case_id"], camera_id=original["camera_id"], file_name=original.get("file_name"),
+        file_size=len(raw), mime_type=original.get("mime_type"), sha256=edited_hash, signature=None,
+        storage_path=storage_path, storage_uri=storage_uri, storage_status=storage_status,
+        storage_error=storage_error, metadata=original.get("metadata"),
+        submitted_by=user["id"], captured_at=original.get("captured_at"),
+        is_derived=True, original_evidence_id=evidence_id, edit_description=edit_description,
+        blockchain_status="NOT_APPLICABLE",  # edited demo copies are not independently anchored
+    )
+
+    custody.append_event(evidence_id=edited_id, event_type="EVIDENCE_CREATED", actor_id=user["id"],
+                          actor_name=user["name"], actor_role=user["role"],
+                          metadata={"edited_from": evidence_id, "edit_description": edit_description})
+    custody.append_event(evidence_id=edited_id, event_type="EDITED_FROM_ORIGINAL", actor_id=user["id"],
+                          actor_name=user["name"], actor_role=user["role"],
+                          metadata={
+                              "original_evidence_id": evidence_id,
+                              "original_sha256": original["sha256"],
+                              "edited_sha256": edited_hash,
+                              "edit_description": edit_description,
+                          })
+    # Recorded on the ORIGINAL's own custody trail too -- appending an event
+    # does not alter the original's sha256/root_hash/signature/file.
+    custody.append_event(evidence_id=evidence_id, event_type="EDITED_COPY_CREATED", actor_id=user["id"],
+                          actor_name=user["name"], actor_role=user["role"],
+                          metadata={"edited_evidence_id": edited_id, "edit_description": edit_description})
+
+    return edited
+
+
 @router.post("/{evidence_id}/anchor")
 def anchor_now(evidence_id: str, user: dict = Depends(require_roles("admin", "investigator"))):
     """Retries the Evidence Registry contract registration for evidence that
