@@ -15,3 +15,4 @@ backend/firebase-service-account.json
 .crimelens_run_frontend.cmd
 .launcher_test.log
 backend/data/
+backend/.deployed_app_id

@@ -96,21 +96,28 @@ def test_register_evidence_rejects_empty_evidence_id():
 
 
 def test_register_evidence_reports_not_configured_when_no_app_id(monkeypatch):
-    """With no ALGORAND_APP_ID set (the real state of this deployment right
-    now), registration must fail with a real, specific, honest error --
-    never silently succeed."""
-    from config import get_settings
+    """With ALGORAND_APP_ID unset, registration must fail with a real,
+    specific, honest error -- never silently succeed. Explicitly forces the
+    unconfigured case via monkeypatch rather than relying on the ambient
+    .env lacking a value, since a real deployment now legitimately sets one."""
+    import blockchain.algorand.contract as contract_module
 
-    get_settings.cache_clear()
+    class _NoAppIdSettings:
+        algorand_app_id = ""
+
+    monkeypatch.setattr(contract_module, "get_settings", lambda: _NoAppIdSettings())
     valid_hash = hashlib.sha256(b"real evidence bytes").hexdigest()
     with pytest.raises(ContractNotConfiguredError):
         register_evidence_on_contract("EVD-2026-TEST", valid_hash)
 
 
-def test_get_evidence_reports_not_configured_when_no_app_id():
-    from config import get_settings
+def test_get_evidence_reports_not_configured_when_no_app_id(monkeypatch):
+    import blockchain.algorand.contract as contract_module
 
-    get_settings.cache_clear()
+    class _NoAppIdSettings:
+        algorand_app_id = ""
+
+    monkeypatch.setattr(contract_module, "get_settings", lambda: _NoAppIdSettings())
     with pytest.raises(ContractNotConfiguredError):
         get_evidence_from_contract("EVD-2026-TEST")
 

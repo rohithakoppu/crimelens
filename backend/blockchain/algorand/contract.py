@@ -108,7 +108,29 @@ def register_evidence_on_contract(evidence_id: str, root_hash: str, metadata_ref
     try:
         params = chain.algod.suggested_params()
 
-        fund_txn = PaymentTxn(sender=chain.address, sp=params, receiver=app_address, amt=box_mbr)
+        # `box_mbr` alone is only the box's own incremental minimum-balance
+        # requirement. Every Algorand account -- including this app's own
+        # escrow account -- separately needs the network's baseline minimum
+        # balance (100,000 microAlgos) before it can hold anything at all.
+        # For the app's first-ever box that baseline hasn't been funded yet,
+        # so paying just box_mbr leaves the account under its required
+        # minimum and the whole atomic group is rejected by the transaction
+        # pool. Querying the account's real current balance/min-balance and
+        # paying exactly the shortfall handles both the first registration
+        # (pays the full 100,000 + box_mbr) and every later one (the account
+        # already clears its baseline, so only the new box's increment is
+        # paid) -- never a guessed or hardcoded top-up amount.
+        try:
+            app_account_info = chain.algod.account_info(app_address)
+            app_current_balance = app_account_info.get("amount", 0)
+            app_current_min_balance = app_account_info.get("min-balance", 0)
+        except AlgodHTTPError:
+            app_current_balance = 0
+            app_current_min_balance = 0
+        required_after_box = app_current_min_balance + box_mbr
+        fund_amount = max(0, required_after_box - app_current_balance)
+
+        fund_txn = PaymentTxn(sender=chain.address, sp=params, receiver=app_address, amt=fund_amount)
         app_txn = ApplicationCallTxn(
             sender=chain.address,
             sp=params,
