@@ -53,8 +53,15 @@ export default function EvidenceDetail() {
 
   useEffect(load, [evidenceId]);
 
+  // Depends only on primitive values (not the whole `evidence` object) so
+  // this never re-fetches the video blob just because load() ran again
+  // (e.g. after logging a custody event or anchoring) and produced a new
+  // object reference for the same underlying file -- previously this
+  // re-downloaded and re-decrypted the full evidence file, sometimes tens
+  // of MB, on every unrelated action on the page.
+  const storageStatus = evidence?.storage_status;
   useEffect(() => {
-    if (!evidence || evidence.storage_status !== "STORED" || !evidenceId) return;
+    if (storageStatus !== "STORED" || !evidenceId) return;
     let cancelled = false;
     let objectUrl: string | null = null;
     api
@@ -71,7 +78,7 @@ export default function EvidenceDetail() {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [evidence, evidenceId]);
+  }, [storageStatus, evidenceId]);
 
   const runVerify = async () => {
     setVerifying(true);
