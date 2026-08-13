@@ -174,7 +174,12 @@ export default function EvidenceDetail() {
   // POST /evidence/{id}/edit, which stores it as a brand-new evidence
   // record (never touching the original's file/hash/custody chain).
   const generateEditedVersion = async () => {
-    if (!videoUrl || !evidenceId || trimEnd <= trimStart) return;
+    if (!videoUrl || !evidenceId) return;
+    if (trimEnd <= trimStart) {
+      setEditStage("error");
+      setEditError("Trim range is empty -- move the end handle so it's after the start handle, then try again.");
+      return;
+    }
     setEditError(null);
     setEditedHash(null);
     setEditedResult(null);
@@ -368,11 +373,30 @@ export default function EvidenceDetail() {
             controls
             className="w-full h-full"
             onLoadedMetadata={(e) => {
-              const d = e.currentTarget.duration;
+              const v = e.currentTarget;
+              const d = v.duration;
               if (isFinite(d) && d > 0) {
                 setPreviewDuration(d);
                 setTrimEnd((prev) => (prev > 0 ? prev : Math.min(d, Math.max(1, d / 2))));
+                return;
               }
+              // Chrome reports duration as Infinity for MediaRecorder-produced
+              // WebM (no duration box in the container) until the video is
+              // force-seeked -- a well-known browser quirk, not an actually
+              // unbounded video. Without this, previewDuration never becomes
+              // truthy, the trim sliders never render, and Edit silently does
+              // nothing no matter what the user clicks.
+              const onTimeUpdate = () => {
+                v.removeEventListener("timeupdate", onTimeUpdate);
+                const real = v.duration;
+                v.currentTime = 0;
+                if (isFinite(real) && real > 0) {
+                  setPreviewDuration(real);
+                  setTrimEnd((prev) => (prev > 0 ? prev : Math.min(real, Math.max(1, real / 2))));
+                }
+              };
+              v.addEventListener("timeupdate", onTimeUpdate);
+              v.currentTime = 1e101;
             }}
           />
         ) : evidence.storage_status === "STORED" ? (
