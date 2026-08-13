@@ -24,8 +24,17 @@ export interface CameraSourceInfo {
 export interface CameraSource {
   readonly sourceType: "web" | "rtsp" | "onvif";
 
-  /** Starts the underlying stream and attaches it to the given <video> element. */
-  start(videoEl: HTMLVideoElement): Promise<CameraSourceInfo>;
+  /**
+   * Starts the underlying stream and attaches it to the given <video> element.
+   * `onStreamEnded`, if given, fires if the track ends for a reason OUTSIDE
+   * the app's own control (device unplugged, OS camera permission revoked,
+   * another application taking exclusive access, driver reset) -- this is a
+   * genuinely different browser event than calling stop() ourselves, which
+   * never fires it. Without a listener for this, a real webcam that gets cut
+   * off externally leaves the UI stuck claiming LIVE while the preview goes
+   * blank, with no way to detect or recover from it.
+   */
+  start(videoEl: HTMLVideoElement, onStreamEnded?: () => void): Promise<CameraSourceInfo>;
 
   /** Stops the underlying stream and releases the device/connection. */
   stop(): void;
@@ -190,7 +199,7 @@ export class WebCameraSource implements CameraSource {
   readonly sourceType = "web" as const;
   private stream: MediaStream | null = null;
 
-  async start(videoEl: HTMLVideoElement): Promise<CameraSourceInfo> {
+  async start(videoEl: HTMLVideoElement, onStreamEnded?: () => void): Promise<CameraSourceInfo> {
     const support = checkCameraSupport();
     if (!support.ok) throw support.error;
 
@@ -220,7 +229,10 @@ export class WebCameraSource implements CameraSource {
     // Do not report LIVE just because getUserMedia() resolved -- a stream
     // object existing doesn't guarantee frames are actually flowing. Verify
     // the track is genuinely live and the video element has real dimensions
-    // before this promise resolves successfully.
+    // before this promise resolves successfully. Real cameras can take a
+    // little longer than a synthetic test device to deliver their first
+    // frame (autofocus/exposure warm-up), so this waits generously before
+    // concluding the stream never came up.
     const validation = await this._validatePlayback(videoEl, stream);
     if (!validation.ok) {
       this.stop();
@@ -228,6 +240,21 @@ export class WebCameraSource implements CameraSource {
     }
 
     const track = stream.getVideoTracks()[0];
+
+    // A track can end for reasons entirely outside this app's control --
+    // the device is unplugged, the OS revokes camera access, or another
+    // application takes it over exclusively. track.stop() (called by our
+    // own stop() below) never fires this event, so it's a reliable signal
+    // that the stream died externally rather than because we ended it.
+    if (track) {
+      track.onended = () => {
+        if (this.stream === stream) {
+          this.stream = null;
+          onStreamEnded?.();
+        }
+      };
+    }
+
     const settings = track?.getSettings?.() ?? {};
     return { width: settings.width, height: settings.height, frameRate: settings.frameRate };
   }

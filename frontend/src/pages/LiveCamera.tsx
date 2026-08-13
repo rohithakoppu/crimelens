@@ -75,11 +75,33 @@ export default function LiveCamera() {
   // webcam); a future RTSP/ONVIF-backed CameraSource would plug in here
   // without touching anything downstream.
 
+  // Fires only if the camera track ends for a reason outside this app's own
+  // control (device unplugged, OS permission revoked, another app taking
+  // exclusive access) -- never from our own Stop Camera click. Without this,
+  // the UI would keep claiming LIVE forever while the preview silently goes
+  // blank, with monitoring/recording still "running" against a dead stream.
+  const handleStreamEnded = useCallback(() => {
+    setCameraStatus("ERROR");
+    setCameraError({
+      code: "DEVICE_BUSY",
+      message: "The camera stream ended unexpectedly -- it may have been disconnected, or another application took control of it. Click Retry to reconnect.",
+    });
+    setVideoInfo(null);
+    if (frameTimerRef.current) clearInterval(frameTimerRef.current);
+    frameTimerRef.current = null;
+    setMonitoring(false);
+    setFrameResult(null);
+    recordingRef.current = false;
+    setRecording(false);
+    if (chunkTimerRef.current) clearTimeout(chunkTimerRef.current);
+    if (secondsTimerRef.current) clearInterval(secondsTimerRef.current);
+  }, []);
+
   const startWebcam = useCallback(async () => {
     setCameraStatus("REQUESTING");
     setCameraError(null);
     try {
-      const info = await sourceRef.current.start(videoRef.current!);
+      const info = await sourceRef.current.start(videoRef.current!, handleStreamEnded);
       setVideoInfo(info);
       setCameraStatus("LIVE");
     } catch (err) {
@@ -90,7 +112,7 @@ export default function LiveCamera() {
         setCameraError({ code: "UNKNOWN", message: "Could not access the webcam." });
       }
     }
-  }, []);
+  }, [handleStreamEnded]);
 
   const stopWebcam = useCallback(() => {
     sourceRef.current.stop();
